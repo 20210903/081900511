@@ -1,151 +1,110 @@
-
-#!/usr/bin/env python
 # -*- coding:utf-8 -*-
-# @Time：2020/4/15 11:40
-# @Software：PyCharm
-# article_add: https://www.cnblogs.com/JentZhang/p/12718092.html
-__author__ = "JentZhang"
-import json
+import os
+os.environ["DJANGO_SETTINGS_MODULE"] = "gwcomments.settings"
+curr_dir = os.path.dirname(os.path.abspath(__file__))
+wordfilter_path = os.path.join(curr_dir, 'wordfilter.txt')
+import time
+time1=time.time()
  
-MinMatchType = 1  # 最小匹配规则
-MaxMatchType = 2  # 最大匹配规则
+# AC自动机算法
+class node(object):
+    def __init__(self):
+        self.next = {}
+        self.fail = None
+        self.isWord = False
+        self.word = ""
  
+class ac_automation(object):
  
-class DFAUtils(object):
-    """
-    DFA算法
-    """
+    def __init__(self):
+        self.root = node()
  
-    def __init__(self, word_warehouse):
-        """
-        算法初始化
-        :param word_warehouse:词库
-        """
-        # 词库
-        self.root = dict()
-        # 无意义词库,在检测中需要跳过的（这种无意义的词最后有个专门的地方维护，保存到数据库或者其他存储介质中）
-        self.skip_root = [' ', '&', '!', '！', '@', '#', '$', '￥', '*', '^', '%', '?', '？', '<', '>', "《", '》']
-        # 初始化词库
-        for word in word_warehouse:
-            self.add_word(word)
+    # 添加敏感词函数
+    def addword(self, word):
+        temp_root = self.root
+        for char in word:
+            if char not in temp_root.next:
+                temp_root.next[char] = node()
+            temp_root = temp_root.next[char]
+        temp_root.isWord = True
+        temp_root.word = word
  
-    def add_word(self, word):
-        """
-        添加词库
-        :param word:
-        :return:
-        """
-        now_node = self.root
-        word_count = len(word)
-        for i in range(word_count):
-            char_str = word[i]
-            if char_str in now_node.keys():
-                # 如果存在该key，直接赋值，用于下一个循环获取
-                now_node = now_node.get(word[i])
-                now_node['is_end'] = False
+    # 失败指针函数
+    def make_fail(self):
+        temp_que = []
+        temp_que.append(self.root)
+        while len(temp_que) != 0:
+            temp = temp_que.pop(0)
+            p = None
+            for key,value in temp.next.item():
+                if temp == self.root:
+                    temp.next[key].fail = self.root
+                else:
+                    p = temp.fail
+                    while p is not None:
+                        if key in p.next:
+                            temp.next[key].fail = p.fail
+                            break
+                        p = p.fail
+                    if p is None:
+                        temp.next[key].fail = self.root
+                temp_que.append(temp.next[key])
+ 
+    # 查找敏感词函数
+    def search(self, content):
+        p = self.root
+        result = []
+        currentposition = 0
+ 
+        while currentposition < len(content):
+            word = content[currentposition]
+            while word in p.next == False and p != self.root:
+                p = p.fail
+ 
+            if word in p.next:
+                p = p.next[word]
             else:
-                # 不存在则构建一个dict
-                new_node = dict()
+                p = self.root
  
-                if i == word_count - 1:  # 最后一个
-                    new_node['is_end'] = True
-                else:  # 不是最后一个
-                    new_node['is_end'] = False
+            if p.isWord:
+                result.append(p.word)
+                p = self.root
+            currentposition += 1
+        return result
  
-                now_node[char_str] = new_node
-                now_node = new_node
+    # 加载敏感词库函数
+    def parse(self, path):
+        with open(path,encoding='utf-8') as f:
+            for keyword in f:
+                self.addword(str(keyword).strip())
  
-    def check_match_word(self, txt, begin_index, match_type=MinMatchType):
+    # 敏感词替换函数
+    def words_replace(self, text):
         """
-        检查文字中是否包含匹配的字符
-        :param txt:待检测的文本
-        :param begin_index: 调用getSensitiveWord时输入的参数，获取词语的上边界index
-        :param match_type:匹配规则 1：最小匹配规则，2：最大匹配规则
-        :return:如果存在，则返回匹配字符的长度，不存在返回0
+        :param ah: AC自动机
+        :param text: 文本
+        :return: 过滤敏感词之后的文本
         """
-        flag = False
-        match_flag_length = 0  # 匹配字符的长度
-        now_map = self.root
-        tmp_flag = 0  # 包括特殊字符的敏感词的长度
+        result = list(set(self.search(text)))
+        for x in result:
+            m = text.replace(x, '*' * len(x))
+            text = m
+        return text
  
-        for i in range(begin_index, len(txt)):
-            word = txt[i]
  
-            # 检测是否是特殊字符"
-            if word in self.skip_root and len(now_map) < 100:
-                # len(nowMap)<100 保证已经找到这个词的开头之后出现的特殊字符
-                tmp_flag += 1
-                continue
-            # 获取指定key
-            now_map = now_map.get(word)
-            if now_map:  # 存在，则判断是否为最后一个
-                # 找到相应key，匹配标识+1
-                match_flag_length += 1
-                tmp_flag += 1
-                # 如果为最后一个匹配规则，结束循环，返回匹配标识数
-                if now_map.get("is_end"):
-                    # 结束标志位为true
-                    flag = True
-                    # 最小规则，直接返回,最大规则还需继续查找
-                    if match_type == MinMatchType:
-                        break
-            else:  # 不存在，直接返回
-                break
-        if tmp_flag < 2 or not flag:  # 长度必须大于等于1，为词
-            tmp_flag = 0
-        return tmp_flag
-    def get_match_word(self, txt, match_type=MinMatchType):
-        """
-        获取匹配到的词语
-        :param txt:待检测的文本
-        :param match_type:匹配规则 1：最小匹配规则，2：最大匹配规则
-        :return:文字中的相匹配词
-        """
-        matched_word_list = list()
-        for i in range(len(txt)):  # 0---11
-            length = self.check_match_word(txt, i, match_type)
-            if length > 0:
-                word = txt[i:i + length]
-                matched_word_list.append(word)
-                # i = i + length - 1
-        return matched_word_list
-    def is_contain(self, txt, match_type=MinMatchType):
-        """
-        判断文字是否包含敏感字符
-        :param txt:待检测的文本
-        :param match_type:匹配规则 1：最小匹配规则，2：最大匹配规则
-        :return:若包含返回true，否则返回false
-        """
-        flag = False
-        for i in range(len(txt)):
-            match_flag = self.check_match_word(txt, i, match_type)
-            if match_flag > 0:
-                flag = True
-        return flag
-    def replace_match_word(self, txt, replace_char='*', match_type=MinMatchType):
-        """
-        替换匹配字符
-        :param txt:待检测的文本
-        :param replace_char:用于替换的字符，匹配的敏感词以字符逐个替换，如"你是大王八"，敏感词"王八"，替换字符*，替换结果"你是大**"
-        :param match_type:匹配规则 1：最小匹配规则，2：最大匹配规则
-        :return:替换敏感字字符后的文本
-        """
-        tuple_set = self.get_match_word(txt, match_type)
-        word_set = [i for i in tuple_set]
-        result_txt = ""
-        if len(word_set) > 0:  # 如果检测出了敏感词，则返回替换后的文本
-            for word in word_set:
-                replace_string = len(word) * replace_char
-                txt = txt.replace(word, replace_string)
-                result_txt = txt
-        else:  # 没有检测出敏感词，则返回原文本
-            result_txt = txt
-        return result_txt
+ 
+ 
+ 
 if __name__ == '__main__':
-    dfa = DFAUtils(word_warehouse=word_warehouse)
-    print('词库结构：', json.dumps(dfa.root, ensure_ascii=False))
-    # 待检测的文本
-    msg = msg
-    print('是否包含：', dfa.is_contain(msg))
-    print('相匹配的词：', dfa.get_match_word(msg))
-    print('替换包含的词：', dfa.replace_match_word(msg)
+ 
+    ah = ac_automation()
+    path= wordfilter_path 
+    ah.parse(path)
+    text1="这是一个政治新闻"
+    text2=ah.words_replace(text1)
+ 
+    print(text1)
+    print(text2)
+ 
+    time2 = time.time()
+    print('总共耗时：' + str(time2 - time1) + 's')
